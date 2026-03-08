@@ -1,0 +1,40 @@
+{
+  "name": "waterfall-contracts",
+  "version": "1.0.0",
+  "description": "Smart contracts for Waterfall film revenue distribution",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:gas": "REPORT_GAS=true hardhat test",
+    "deploy:local": "hardhat run scripts/deploy.js --network hardhat",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
+    "deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
+    "deploy:mock": "hardhat run scripts/deployMockProjects.js --network localhost",
+    "deploy:mock:local": "hardhat run scripts/deployMockProjects.js --network hardhat",
+    "deploy:arbitrum-sepolia": "hardhat run scripts/deploy.js --network arbitrumSepolia",
+    "deploy:testnet:arbitrum": "hardhat run scripts/deployTestnet.js --network arbitrumSepolia",
+    "deploy:testnet:sepolia": "hardhat run scripts/deployTestnet.js --network sepolia",
+    "verify:sepolia": "hardhat verify --network sepolia",
+    "verify:arbitrum-sepolia": "hardhat verify --network arbitrumSepolia",
+    "node": "hardhat node",
+    "console": "hardhat console"
+  },
+  "keywords": [
+    "ethereum",
+    "smart-contracts",
+    "film",
+    "revenue",
+    "waterfall"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.19.4"
+  },
+  "dependencies": {
+    "@nomicfoundation/hardhat-verify": "^2.1.3",
+    "@openzeppelin/contracts": "^5.0.1",
+    "dotenv": "^16.3.1"
+  }
+}

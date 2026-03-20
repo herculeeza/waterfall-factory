@@ -106,7 +106,6 @@ async function deployMidnightDreams(factory, funder) {
   console.log("\n  📄 Creating project via factory...");
   let tx = await factory.connect(deployer).createProject(
     "Midnight Dreams",
-    "https://api.waterfall.film/metadata/midnight-dreams/",
     ethers.ZeroAddress // ETH payment
   );
   await tx.wait();
@@ -257,7 +256,6 @@ async function deployUrbanEchoes(factory, funder) {
   console.log("\n  📄 Creating project via factory...");
   let tx = await factory.connect(deployer).createProject(
     "Urban Echoes",
-    "https://api.waterfall.film/metadata/urban-echoes/",
     ethers.ZeroAddress // ETH payment
   );
   await tx.wait();

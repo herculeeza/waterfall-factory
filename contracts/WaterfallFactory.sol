@@ -2,14 +2,27 @@
 pragma solidity ^0.8.20;
 
 import "./waterfall.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
 /**
  * @title WaterfallFactory - Deploys and registers Waterfall project contracts
  * @dev Single deployment point for all waterfall projects. Enforces consistent
  *      fee configuration and maintains an on-chain registry of all projects.
+ *      Uses CREATE2 for deterministic project addresses.
+ *
+ * NOTE: Project registry is append-only — there is no deregister function.
+ *       Projects created in error remain in the registry but have no impact
+ *       on other projects. Filter inactive projects off-chain.
+ *
+ * NOTE: Uses Ownable2Step for factory ownership to prevent accidental transfer.
+ *       Waterfall contracts use single-step Ownable since the factory must
+ *       transfer ownership atomically during createProject.
  */
-contract WaterfallFactory is Ownable {
+contract WaterfallFactory is Ownable2Step {
+
+    error FeeExceedsMax();
+    error FeeRecipientRequired();
+    error ETHTransferFailed();
 
     // Default fee settings applied to new projects
     address public defaultFeeRecipient;
@@ -27,6 +40,7 @@ contract WaterfallFactory is Ownable {
         uint256 feeBps
     );
     event DefaultFeeUpdated(address feeRecipient, uint256 feeBps);
+    event ETHRescued(address indexed to, uint256 amount);
 
     /// @param _feeRecipient Address that receives platform fees
     /// @param _feeBps Default fee in basis points (e.g. 500 = 5%)
@@ -34,25 +48,24 @@ contract WaterfallFactory is Ownable {
         address _feeRecipient,
         uint256 _feeBps
     ) Ownable(msg.sender) {
-        require(_feeBps <= 1000, "Fee cannot exceed 10%");
-        require(_feeBps == 0 || _feeRecipient != address(0), "Fee recipient required when fee > 0");
+        if (_feeBps > 1000) revert FeeExceedsMax();
+        if (_feeBps > 0 && _feeRecipient == address(0)) revert FeeRecipientRequired();
         defaultFeeRecipient = _feeRecipient;
         defaultFeeBps = _feeBps;
     }
 
     /// @notice Deploy a new Waterfall project using the default fee settings
     /// @param projectName Display name for the project
-    /// @param uri ERC1155 metadata base URI
     /// @param _paymentToken Payment token address (address(0) for native ETH)
     /// @return projectAddress Address of the newly deployed Waterfall contract
     function createProject(
         string calldata projectName,
-        string calldata uri,
         address _paymentToken
     ) external returns (address projectAddress) {
-        Waterfall project = new Waterfall(
+        bytes32 salt = keccak256(abi.encode(msg.sender, allProjects.length));
+
+        Waterfall project = new Waterfall{salt: salt}(
             projectName,
-            uri,
             _paymentToken,
             defaultFeeRecipient,
             defaultFeeBps
@@ -72,12 +85,14 @@ contract WaterfallFactory is Ownable {
     /// @param _feeRecipient New fee recipient address
     /// @param _feeBps New fee in basis points
     function setDefaultFee(address _feeRecipient, uint256 _feeBps) external onlyOwner {
-        require(_feeBps <= 1000, "Fee cannot exceed 10%");
-        require(_feeBps == 0 || _feeRecipient != address(0), "Fee recipient required when fee > 0");
+        if (_feeBps > 1000) revert FeeExceedsMax();
+        if (_feeBps > 0 && _feeRecipient == address(0)) revert FeeRecipientRequired();
         defaultFeeRecipient = _feeRecipient;
         defaultFeeBps = _feeBps;
         emit DefaultFeeUpdated(_feeRecipient, _feeBps);
     }
+
+    // --- View Functions ---
 
     /// @notice Get total number of projects deployed through this factory
     function projectCount() external view returns (uint256) {
@@ -85,12 +100,26 @@ contract WaterfallFactory is Ownable {
     }
 
     /// @notice Get all projects deployed by a specific owner
-    function getProjectsByOwner(address owner) external view returns (address[] memory) {
-        return projectsByOwner[owner];
+    /// @param projectOwner Address of the project owner
+    /// @return Array of project contract addresses
+    function getProjectsByOwner(address projectOwner) external view returns (address[] memory) {
+        return projectsByOwner[projectOwner];
     }
 
     /// @notice Get all projects deployed through this factory
+    /// @return Array of all project contract addresses
     function getAllProjects() external view returns (address[] memory) {
         return allProjects;
+    }
+
+    // --- Rescue Functions ---
+
+    /// @notice Rescue accidentally force-sent ETH (factory should never hold ETH)
+    /// @param to Recipient address
+    function rescueETH(address to) external onlyOwner {
+        uint256 balance = address(this).balance;
+        (bool success, ) = payable(to).call{value: balance}("");
+        if (!success) revert ETHTransferFailed();
+        emit ETHRescued(to, balance);
     }
 }

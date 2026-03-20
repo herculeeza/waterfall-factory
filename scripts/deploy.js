@@ -33,13 +33,13 @@ async function main() {
 
   // Optionally create a first project through the factory
   const projectName = process.env.PROJECT_NAME;
-  const baseURI = process.env.PROJECT_URI || "https://api.waterfall.film/metadata/";
+  // URI parameter removed — metadata is generated on-chain by uri()
   let projectAddress = null;
 
   if (projectName) {
     const paymentToken = process.env.PAYMENT_TOKEN || ethers.ZeroAddress;
     console.log("📄 Creating project:", projectName, paymentToken === ethers.ZeroAddress ? "(ETH)" : `(token: ${paymentToken})`);
-    const tx = await factory.createProject(projectName, baseURI, paymentToken);
+    const tx = await factory.createProject(projectName, paymentToken);
     const receipt = await tx.wait();
 
     const projects = await factory.getProjectsByOwner(deployer.address);
@@ -88,7 +88,7 @@ async function main() {
   console.log("\n🎉 Deployment complete!");
   console.log("\n📝 Next steps:");
   console.log("   1. Save the factory address:", factoryAddress);
-  console.log("   2. Create projects: factory.createProject('Film Name', 'uri', paymentToken)");
+  console.log("   2. Create projects: factory.createProject('Film Name', paymentToken)");
   console.log("      - paymentToken = address(0) for ETH, or an ERC20 address (e.g. USDC)");
   console.log("      - Each project is denominated in exactly one token. All tier caps,");
   console.log("        deposits, and withdrawals use that single unit of account.");

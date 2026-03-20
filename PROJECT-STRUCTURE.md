@@ -5,7 +5,7 @@ Complete file structure for the Waterfall smart contracts project.
 ## Directory Structure
 
 ```
-waterfall-contracts/
+waterfall-factory/
 ├── contracts/
 │   ├── waterfall.sol          # Main revenue distribution contract
 │   ├── WaterfallFactory.sol   # Factory for deploying projects
@@ -41,7 +41,7 @@ waterfall-contracts/
 **`contracts/waterfall.sol`**
 - Main smart contract implementing ERC1155-based revenue distribution
 - Each contract is denominated in a single token (ETH or ERC20) — set at deploy time via `paymentToken`
-- Features: Priority-based waterfall, platform fee, dividend tracking, transferable positions, token rescue
+- Features: Priority-based waterfall, platform fee, dividend tracking, transferable positions, on-chain holder enumeration, token rescue
 - Dependencies: OpenZeppelin contracts (ERC1155, IERC20, SafeERC20, Ownable, ReentrancyGuard)
 
 **`contracts/WaterfallFactory.sol`**

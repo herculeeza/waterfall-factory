@@ -11,7 +11,7 @@ describe("WaterfallRevenueDistribution", function () {
 
     // Deploy contract with no fee (preserves existing test math)
     const WaterfallContract = await ethers.getContractFactory("Waterfall");
-    waterfall = await WaterfallContract.deploy("Test Project", "https://test.com/", ethers.ZeroAddress, ethers.ZeroAddress, 0);
+    waterfall = await WaterfallContract.deploy("Test Project", ethers.ZeroAddress, ethers.ZeroAddress, 0);
     await waterfall.waitForDeployment();
   });
 
@@ -33,15 +33,36 @@ describe("WaterfallRevenueDistribution", function () {
     it("Should reject fee > 10%", async function () {
       const WaterfallContract = await ethers.getContractFactory("Waterfall");
       await expect(
-        WaterfallContract.deploy("Test", "https://test.com/", ethers.ZeroAddress, feeWallet.address, 1001)
-      ).to.be.revertedWith("Fee cannot exceed 10%");
+        WaterfallContract.deploy("Test", ethers.ZeroAddress, feeWallet.address, 1001)
+      ).to.be.revertedWithCustomError(waterfall, "FeeExceedsMax");
     });
 
     it("Should reject fee > 0 with zero recipient", async function () {
       const WaterfallContract = await ethers.getContractFactory("Waterfall");
       await expect(
-        WaterfallContract.deploy("Test", "https://test.com/", ethers.ZeroAddress, ethers.ZeroAddress, 500)
-      ).to.be.revertedWith("Fee recipient required when fee > 0");
+        WaterfallContract.deploy("Test", ethers.ZeroAddress, ethers.ZeroAddress, 500)
+      ).to.be.revertedWithCustomError(waterfall, "FeeRecipientRequired");
+    });
+
+    it("Should reject unsafe project name with quotes", async function () {
+      const WaterfallContract = await ethers.getContractFactory("Waterfall");
+      await expect(
+        WaterfallContract.deploy('Test "Project"', ethers.ZeroAddress, ethers.ZeroAddress, 0)
+      ).to.be.revertedWithCustomError(waterfall, "UnsafeJsonString");
+    });
+
+    it("Should reject unsafe project name with backslash", async function () {
+      const WaterfallContract = await ethers.getContractFactory("Waterfall");
+      await expect(
+        WaterfallContract.deploy("Test\\Project", ethers.ZeroAddress, ethers.ZeroAddress, 0)
+      ).to.be.revertedWithCustomError(waterfall, "UnsafeJsonString");
+    });
+
+    it("Should reject project name with control characters", async function () {
+      const WaterfallContract = await ethers.getContractFactory("Waterfall");
+      await expect(
+        WaterfallContract.deploy("Test\x00Project", ethers.ZeroAddress, ethers.ZeroAddress, 0)
+      ).to.be.revertedWithCustomError(waterfall, "UnsafeJsonString");
     });
   });
 
@@ -62,7 +83,8 @@ describe("WaterfallRevenueDistribution", function () {
       // Check priority info
       const info = await waterfall.getPriorityInfo(tokenId);
       expect(info.exists).to.be.true;
-      expect(info.totalSupply).to.equal(total);
+      expect(info.priority).to.equal(0);
+      expect(info.tierTotalSupply).to.equal(total);
       expect(info.maxAmount).to.equal(total); // Capped at total
     });
 
@@ -82,6 +104,7 @@ describe("WaterfallRevenueDistribution", function () {
       // Check priority info
       const info = await waterfall.getPriorityInfo(tokenId);
       expect(info.exists).to.be.true;
+      expect(info.priority).to.equal(3);
       expect(info.maxAmount).to.equal(0); // Uncapped
     });
 
@@ -94,7 +117,7 @@ describe("WaterfallRevenueDistribution", function () {
 
       await expect(
         waterfall.createPriority(1, 0, total, total, holders, amounts)
-      ).to.be.revertedWith("Priority value already used");
+      ).to.be.revertedWithCustomError(waterfall, "PriorityExists");
     });
 
     it("Should reject creating duplicate token IDs", async function () {
@@ -107,7 +130,13 @@ describe("WaterfallRevenueDistribution", function () {
 
       await expect(
         waterfall.createPriority(tokenId, 0, total, total, holders, amounts)
-      ).to.be.revertedWith("Token ID already exists");
+      ).to.be.revertedWithCustomError(waterfall, "TokenIdExists");
+    });
+
+    it("Should reject zero amount for a holder", async function () {
+      await expect(
+        waterfall.createPriority(0, 0, 1000, 1000, [investor1.address, investor2.address], [1000, 0])
+      ).to.be.revertedWithCustomError(waterfall, "ZeroAmount");
     });
   });
 
@@ -121,7 +150,24 @@ describe("WaterfallRevenueDistribution", function () {
         [ethers.parseEther("100000")]
       );
 
-      await expect(waterfall.finalize()).to.be.revertedWith("Must have an uncapped tier");
+      await expect(waterfall.finalize()).to.be.revertedWithCustomError(waterfall, "MustHaveUncappedTier");
+    });
+
+    it("Should reject finalization when uncapped tier is not last in priority order", async function () {
+      // Create uncapped tier at priority 0 (lowest/first)
+      await waterfall.createPriority(0, 0, 1000, 0, [investor1.address], [1000]);
+
+      // Create capped tier at priority 1 (higher/later)
+      await waterfall.createPriority(1, 1, 1000, 1000, [investor2.address], [1000]);
+
+      await expect(waterfall.finalize()).to.be.revertedWithCustomError(waterfall, "UncappedTierNotLast");
+    });
+
+    it("Should allow finalization when uncapped tier has highest priority value", async function () {
+      await waterfall.createPriority(0, 0, 1000, 1000, [investor1.address], [1000]);
+      await waterfall.createPriority(99, 1, 1000, 0, [investor2.address], [1000]);
+
+      await expect(waterfall.finalize()).to.not.be.reverted;
     });
 
     it("Should reject deposits before finalization", async function () {
@@ -137,7 +183,7 @@ describe("WaterfallRevenueDistribution", function () {
 
       await expect(
         waterfall["depositRevenue()"]({ value: ethers.parseEther("1") })
-      ).to.be.revertedWith("Waterfall not finalized");
+      ).to.be.revertedWithCustomError(waterfall, "NotFinalized");
     });
 
     it("Should reject ERC20 deposits before finalization", async function () {
@@ -147,7 +193,7 @@ describe("WaterfallRevenueDistribution", function () {
 
       const WaterfallContract = await ethers.getContractFactory("Waterfall");
       const tokenWaterfall = await WaterfallContract.deploy(
-        "Token Project", "https://test.com/",
+        "Token Project",
         await token.getAddress(),
         ethers.ZeroAddress, 0
       );
@@ -161,7 +207,156 @@ describe("WaterfallRevenueDistribution", function () {
 
       await expect(
         tokenWaterfall["depositRevenue(uint256)"](1000)
-      ).to.be.revertedWith("Waterfall not finalized");
+      ).to.be.revertedWithCustomError(tokenWaterfall, "NotFinalized");
+    });
+  });
+
+  describe("Holder Enumeration", function () {
+    it("Should track holders created via createPriority", async function () {
+      await waterfall.createPriority(
+        0, 0,
+        ethers.parseEther("120000"),
+        ethers.parseEther("120000"),
+        [investor1.address, investor2.address],
+        [ethers.parseEther("80000"), ethers.parseEther("40000")]
+      );
+
+      const holders = await waterfall["getHolders(uint256)"](0);
+      expect(holders).to.have.lengthOf(2);
+      expect(holders).to.include(investor1.address);
+      expect(holders).to.include(investor2.address);
+    });
+
+    it("Should track new holders after token transfer", async function () {
+      await waterfall.createPriority(
+        0, 0,
+        ethers.parseEther("100000"),
+        ethers.parseEther("100000"),
+        [investor1.address],
+        [ethers.parseEther("100000")]
+      );
+
+      await waterfall.createPriority(99, 1, 1000000, 0, [manager.address], [1000000]);
+      await waterfall.finalize();
+
+      // Transfer tokens to a new address (no revenue yet, so no withdrawal needed)
+      await waterfall.connect(investor1).safeTransferFrom(
+        investor1.address,
+        soundDesigner.address,
+        0,
+        ethers.parseEther("50000"),
+        "0x"
+      );
+
+      const holders = await waterfall["getHolders(uint256)"](0);
+      expect(holders).to.have.lengthOf(2);
+      expect(holders).to.include(investor1.address);
+      expect(holders).to.include(soundDesigner.address);
+    });
+
+    it("Should not duplicate holders on multiple transfers to same address", async function () {
+      await waterfall.createPriority(
+        0, 0,
+        ethers.parseEther("100000"),
+        ethers.parseEther("100000"),
+        [investor1.address],
+        [ethers.parseEther("100000")]
+      );
+
+      await waterfall.createPriority(99, 1, 1000000, 0, [manager.address], [1000000]);
+      await waterfall.finalize();
+
+      // First transfer
+      await waterfall.connect(investor1).safeTransferFrom(
+        investor1.address,
+        soundDesigner.address,
+        0,
+        ethers.parseEther("25000"),
+        "0x"
+      );
+
+      // Second transfer to same address
+      await waterfall.connect(investor1).safeTransferFrom(
+        investor1.address,
+        soundDesigner.address,
+        0,
+        ethers.parseEther("25000"),
+        "0x"
+      );
+
+      const holders = await waterfall["getHolders(uint256)"](0);
+      expect(holders).to.have.lengthOf(2); // Still just 2, not 3
+    });
+
+    it("Should return empty array for non-existent tier", async function () {
+      const holders = await waterfall["getHolders(uint256)"](42);
+      expect(holders).to.have.lengthOf(0);
+    });
+
+    it("Should not deduplicate holders passed to createPriority", async function () {
+      // Same holder appearing in the holders array is prevented by the dedup
+      await waterfall.createPriority(
+        0, 0,
+        ethers.parseEther("100000"),
+        ethers.parseEther("100000"),
+        [investor1.address, investor1.address],
+        [ethers.parseEther("60000"), ethers.parseEther("40000")]
+      );
+
+      const holders = await waterfall["getHolders(uint256)"](0);
+      // Dedup mapping prevents duplicate entries
+      expect(holders).to.have.lengthOf(1);
+      expect(holders[0]).to.equal(investor1.address);
+    });
+
+    it("Should keep zero-balance holders in the array (append-only)", async function () {
+      await waterfall.createPriority(
+        0, 0,
+        ethers.parseEther("100000"),
+        ethers.parseEther("100000"),
+        [investor1.address],
+        [ethers.parseEther("100000")]
+      );
+
+      await waterfall.createPriority(99, 1, 1000000, 0, [manager.address], [1000000]);
+      await waterfall.finalize();
+
+      // Transfer ALL tokens away
+      await waterfall.connect(investor1).safeTransferFrom(
+        investor1.address,
+        soundDesigner.address,
+        0,
+        ethers.parseEther("100000"),
+        "0x"
+      );
+
+      // investor1 now has zero balance but is still in the array
+      expect(await waterfall.balanceOf(investor1.address, 0)).to.equal(0);
+      const holders = await waterfall["getHolders(uint256)"](0);
+      expect(holders).to.include(investor1.address);
+      expect(holders).to.include(soundDesigner.address);
+    });
+
+    it("Should support paginated getHolders", async function () {
+      await waterfall.createPriority(
+        0, 0,
+        ethers.parseEther("120000"),
+        ethers.parseEther("120000"),
+        [investor1.address, investor2.address, soundDesigner.address],
+        [ethers.parseEther("40000"), ethers.parseEther("40000"), ethers.parseEther("40000")]
+      );
+
+      // Get first 2 holders
+      const page1 = await waterfall["getHolders(uint256,uint256,uint256)"](0, 0, 2);
+      expect(page1).to.have.lengthOf(2);
+
+      // Get remaining holders
+      const page2 = await waterfall["getHolders(uint256,uint256,uint256)"](0, 2, 10);
+      expect(page2).to.have.lengthOf(1);
+
+      // Offset beyond length returns empty
+      const page3 = await waterfall["getHolders(uint256,uint256,uint256)"](0, 100, 10);
+      expect(page3).to.have.lengthOf(0);
     });
   });
 
@@ -254,7 +449,7 @@ describe("WaterfallRevenueDistribution", function () {
           ethers.parseEther("50000"),
           "0x"
         )
-      ).to.be.revertedWith("Must withdraw all earnings before transfer");
+      ).to.be.revertedWithCustomError(waterfall, "MustWithdrawBeforeTransfer");
 
       // Sound designer withdraws their share
       await waterfall.connect(soundDesigner).withdraw(1);
@@ -404,7 +599,7 @@ describe("WaterfallRevenueDistribution", function () {
     beforeEach(async function () {
       // Deploy with 5% fee
       const WaterfallContract = await ethers.getContractFactory("Waterfall");
-      feeWaterfall = await WaterfallContract.deploy("Fee Project", "https://test.com/", ethers.ZeroAddress, feeWallet.address, 500);
+      feeWaterfall = await WaterfallContract.deploy("Fee Project", ethers.ZeroAddress, feeWallet.address, 500);
       await feeWaterfall.waitForDeployment();
 
       // Create a capped tier and uncapped equity tier
@@ -487,6 +682,138 @@ describe("WaterfallRevenueDistribution", function () {
       expect(await waterfall.totalFeesCollected()).to.equal(0);
     });
   });
+
+  describe("Pausable", function () {
+    beforeEach(async function () {
+      await waterfall.createPriority(
+        0, 0,
+        ethers.parseEther("100000"),
+        ethers.parseEther("100000"),
+        [investor1.address],
+        [ethers.parseEther("100000")]
+      );
+
+      await waterfall.createPriority(99, 1, 1000000, 0, [manager.address], [1000000]);
+      await waterfall.finalize();
+    });
+
+    it("Should allow owner to pause and unpause", async function () {
+      await waterfall.pause();
+      expect(await waterfall.paused()).to.be.true;
+
+      await waterfall.unpause();
+      expect(await waterfall.paused()).to.be.false;
+    });
+
+    it("Should block deposits when paused", async function () {
+      await waterfall.pause();
+      await expect(
+        waterfall["depositRevenue()"]({ value: ethers.parseEther("1") })
+      ).to.be.revertedWithCustomError(waterfall, "EnforcedPause");
+    });
+
+    it("Should block withdrawals when paused", async function () {
+      await waterfall["depositRevenue()"]({ value: ethers.parseEther("100000") });
+      await waterfall.pause();
+      await expect(
+        waterfall.connect(investor1).withdraw(0)
+      ).to.be.revertedWithCustomError(waterfall, "EnforcedPause");
+    });
+
+    it("Should block transfers when paused", async function () {
+      await waterfall.pause();
+      await expect(
+        waterfall.connect(investor1).safeTransferFrom(
+          investor1.address,
+          manager.address,
+          0,
+          ethers.parseEther("50000"),
+          "0x"
+        )
+      ).to.be.revertedWithCustomError(waterfall, "EnforcedPause");
+    });
+
+    it("Should not allow non-owner to pause", async function () {
+      await expect(
+        waterfall.connect(investor1).pause()
+      ).to.be.revertedWithCustomError(waterfall, "OwnableUnauthorizedAccount");
+    });
+  });
+
+  describe("Image URI", function () {
+    it("Should allow owner to set image URI", async function () {
+      await waterfall.setImageURI("https://example.com/image.png");
+      expect(await waterfall.imageURI()).to.equal("https://example.com/image.png");
+    });
+
+    it("Should include image in metadata when set", async function () {
+      await waterfall.createPriority(0, 0, 1000, 1000, [investor1.address], [1000]);
+      await waterfall.setImageURI("https://example.com/image.png");
+
+      const tokenUri = await waterfall.uri(0);
+      // Decode the base64 data URI
+      const json = Buffer.from(tokenUri.replace("data:application/json;base64,", ""), "base64").toString();
+      const metadata = JSON.parse(json);
+      expect(metadata.image).to.equal("https://example.com/image.png");
+    });
+
+    it("Should not include image field when not set", async function () {
+      await waterfall.createPriority(0, 0, 1000, 1000, [investor1.address], [1000]);
+
+      const tokenUri = await waterfall.uri(0);
+      const json = Buffer.from(tokenUri.replace("data:application/json;base64,", ""), "base64").toString();
+      const metadata = JSON.parse(json);
+      expect(metadata.image).to.be.undefined;
+    });
+
+    it("Should reject imageURI with quotes", async function () {
+      await expect(
+        waterfall.setImageURI('https://example.com/image"bad.png')
+      ).to.be.revertedWithCustomError(waterfall, "UnsafeJsonString");
+    });
+
+    it("Should reject imageURI with backslash", async function () {
+      await expect(
+        waterfall.setImageURI("https://example.com\\bad")
+      ).to.be.revertedWithCustomError(waterfall, "UnsafeJsonString");
+    });
+
+    it("Should reject imageURI with control characters", async function () {
+      await expect(
+        waterfall.setImageURI("https://example.com/\n")
+      ).to.be.revertedWithCustomError(waterfall, "UnsafeJsonString");
+    });
+  });
+
+  describe("View Helpers", function () {
+    beforeEach(async function () {
+      await waterfall.createPriority(0, 0, ethers.parseEther("100000"), ethers.parseEther("100000"), [investor1.address], [ethers.parseEther("100000")]);
+      await waterfall.createPriority(1, 1, ethers.parseEther("50000"), ethers.parseEther("50000"), [investor1.address], [ethers.parseEther("50000")]);
+      await waterfall.createPriority(99, 2, 1000000, 0, [manager.address], [1000000]);
+      await waterfall.finalize();
+      await waterfall["depositRevenue()"]({ value: ethers.parseEther("200000") });
+    });
+
+    it("Should return total available across all tiers", async function () {
+      const total = await waterfall.getTotalAvailable(investor1.address);
+      // Investor1 has $100k in tier 0 + $50k in tier 1 = $150k
+      expect(total).to.equal(ethers.parseEther("150000"));
+    });
+
+    it("Should return zero for user with no tokens", async function () {
+      const total = await waterfall.getTotalAvailable(soundDesigner.address);
+      expect(total).to.equal(0);
+    });
+
+    it("Should return accounting balance", async function () {
+      // $200k deposited, nothing withdrawn yet
+      expect(await waterfall.getAccountingBalance()).to.equal(ethers.parseEther("200000"));
+
+      // Withdraw $100k
+      await waterfall.connect(investor1).withdraw(0);
+      expect(await waterfall.getAccountingBalance()).to.equal(ethers.parseEther("100000"));
+    });
+  });
 });
 
 describe("WaterfallFactory", function () {
@@ -514,7 +841,7 @@ describe("WaterfallFactory", function () {
 
   describe("Project Creation", function () {
     it("Should deploy a new Waterfall project", async function () {
-      const tx = await factory.connect(user1).createProject("My Film", "https://example.com/", ethers.ZeroAddress);
+      const tx = await factory.connect(user1).createProject("My Film", ethers.ZeroAddress);
       const receipt = await tx.wait();
 
       // Should have one project
@@ -533,9 +860,9 @@ describe("WaterfallFactory", function () {
     });
 
     it("Should track multiple projects per owner", async function () {
-      await factory.connect(user1).createProject("Film A", "https://a.com/", ethers.ZeroAddress);
-      await factory.connect(user1).createProject("Film B", "https://b.com/", ethers.ZeroAddress);
-      await factory.connect(user2).createProject("Film C", "https://c.com/", ethers.ZeroAddress);
+      await factory.connect(user1).createProject("Film A", ethers.ZeroAddress);
+      await factory.connect(user1).createProject("Film B", ethers.ZeroAddress);
+      await factory.connect(user2).createProject("Film C", ethers.ZeroAddress);
 
       expect(await factory.projectCount()).to.equal(3);
 
@@ -550,7 +877,7 @@ describe("WaterfallFactory", function () {
     });
 
     it("Should allow project owner to create tiers", async function () {
-      await factory.connect(user1).createProject("My Film", "https://example.com/", ethers.ZeroAddress);
+      await factory.connect(user1).createProject("My Film", ethers.ZeroAddress);
       const projects = await factory.getProjectsByOwner(user1.address);
       const waterfall = await ethers.getContractAt("Waterfall", projects[0]);
 
@@ -567,7 +894,7 @@ describe("WaterfallFactory", function () {
     });
 
     it("Should not allow non-owner to create tiers", async function () {
-      await factory.connect(user1).createProject("My Film", "https://example.com/", ethers.ZeroAddress);
+      await factory.connect(user1).createProject("My Film", ethers.ZeroAddress);
       const projects = await factory.getProjectsByOwner(user1.address);
       const waterfall = await ethers.getContractAt("Waterfall", projects[0]);
 
@@ -599,13 +926,13 @@ describe("WaterfallFactory", function () {
 
     it("Should apply updated fee to new projects only", async function () {
       // Create project with original 5% fee
-      await factory.connect(user1).createProject("Film A", "https://a.com/", ethers.ZeroAddress);
+      await factory.connect(user1).createProject("Film A", ethers.ZeroAddress);
 
       // Update fee to 3%
       await factory.setDefaultFee(feeWallet.address, 300);
 
       // Create project with new 3% fee
-      await factory.connect(user1).createProject("Film B", "https://b.com/", ethers.ZeroAddress);
+      await factory.connect(user1).createProject("Film B", ethers.ZeroAddress);
 
       const projects = await factory.getProjectsByOwner(user1.address);
       const waterfallA = await ethers.getContractAt("Waterfall", projects[0]);
@@ -616,6 +943,41 @@ describe("WaterfallFactory", function () {
 
       // Film B should have the new 3% fee
       expect(await waterfallB.feeBps()).to.equal(300);
+    });
+  });
+
+  describe("Two-Step Ownership", function () {
+    it("Should require acceptance for ownership transfer", async function () {
+      await factory.transferOwnership(user1.address);
+
+      // Owner hasn't changed yet
+      expect(await factory.owner()).to.equal(owner.address);
+      expect(await factory.pendingOwner()).to.equal(user1.address);
+
+      // Accept ownership
+      await factory.connect(user1).acceptOwnership();
+      expect(await factory.owner()).to.equal(user1.address);
+    });
+
+    it("Should not allow non-pending owner to accept", async function () {
+      await factory.transferOwnership(user1.address);
+
+      await expect(
+        factory.connect(user2).acceptOwnership()
+      ).to.be.revertedWithCustomError(factory, "OwnableUnauthorizedAccount");
+    });
+  });
+
+  describe("Factory Rescue", function () {
+    it("Should allow owner to rescue ETH", async function () {
+      // rescueETH should not revert even with 0 balance
+      await expect(factory.rescueETH(owner.address)).to.not.be.reverted;
+    });
+
+    it("Should not allow non-owner to rescue ETH", async function () {
+      await expect(
+        factory.connect(user1).rescueETH(user1.address)
+      ).to.be.revertedWithCustomError(factory, "OwnableUnauthorizedAccount");
     });
   });
 });
@@ -633,6 +995,11 @@ describe("Waterfall ERC20 Support", function () {
     dai = await MockERC20.deploy("Dai Stablecoin", "DAI", 18);
     await usdc.waitForDeployment();
     await dai.waitForDeployment();
+
+    // Deploy the shared ETH waterfall for tests that need it
+    const WaterfallContract = await ethers.getContractFactory("Waterfall");
+    waterfall = await WaterfallContract.deploy("ETH Project", ethers.ZeroAddress, ethers.ZeroAddress, 0);
+    await waterfall.waitForDeployment();
   });
 
   describe("USDC (6 decimals)", function () {
@@ -642,7 +1009,7 @@ describe("Waterfall ERC20 Support", function () {
     beforeEach(async function () {
       const WaterfallContract = await ethers.getContractFactory("Waterfall");
       usdcWaterfall = await WaterfallContract.deploy(
-        "USDC Film", "https://test.com/",
+        "USDC Film",
         await usdc.getAddress(),
         ethers.ZeroAddress, 0
       );
@@ -677,13 +1044,13 @@ describe("Waterfall ERC20 Support", function () {
     it("Should reject ETH sent to USDC waterfall", async function () {
       await expect(
         usdcWaterfall["depositRevenue()"]({ value: ethers.parseEther("1") })
-      ).to.be.revertedWith("Use depositRevenue(amount) for token deposits");
+      ).to.be.revertedWithCustomError(usdcWaterfall, "UseDepositRevenueWithAmount");
     });
 
     it("Should reject depositRevenue(amount) with ETH value", async function () {
       await expect(
         usdcWaterfall["depositRevenue(uint256)"](USDC(100), { value: ethers.parseEther("1") })
-      ).to.be.revertedWith("Do not send ETH for token deposits");
+      ).to.be.revertedWithCustomError(usdcWaterfall, "ETHNotAllowedForToken");
     });
 
     it("Should distribute USDC through waterfall correctly", async function () {
@@ -718,7 +1085,7 @@ describe("Waterfall ERC20 Support", function () {
       // Give investor1 tokens in both tiers for batch test
       const WaterfallContract = await ethers.getContractFactory("Waterfall");
       const batchWaterfall = await WaterfallContract.deploy(
-        "Batch USDC", "https://test.com/",
+        "Batch USDC",
         await usdc.getAddress(),
         ethers.ZeroAddress, 0
       );
@@ -751,7 +1118,7 @@ describe("Waterfall ERC20 Support", function () {
     beforeEach(async function () {
       const WaterfallContract = await ethers.getContractFactory("Waterfall");
       daiWaterfall = await WaterfallContract.deploy(
-        "DAI Film", "https://test.com/",
+        "DAI Film",
         await dai.getAddress(),
         ethers.ZeroAddress, 0
       );
@@ -800,7 +1167,7 @@ describe("Waterfall ERC20 Support", function () {
     beforeEach(async function () {
       const WaterfallContract = await ethers.getContractFactory("Waterfall");
       feeWaterfall = await WaterfallContract.deploy(
-        "Fee USDC Film", "https://test.com/",
+        "Fee USDC Film",
         await usdc.getAddress(),
         feeWallet.address, 500 // 5% fee
       );
@@ -844,7 +1211,7 @@ describe("Waterfall ERC20 Support", function () {
     beforeEach(async function () {
       const WaterfallContract = await ethers.getContractFactory("Waterfall");
       usdcWaterfall = await WaterfallContract.deploy(
-        "USDC Film", "https://test.com/",
+        "USDC Film",
         await usdc.getAddress(),
         ethers.ZeroAddress, 0
       );
@@ -871,7 +1238,7 @@ describe("Waterfall ERC20 Support", function () {
 
       await expect(
         usdcWaterfall.rescueTokens(await usdc.getAddress(), owner.address, USDC(1000))
-      ).to.be.revertedWith("Cannot rescue payment token");
+      ).to.be.revertedWithCustomError(usdcWaterfall, "CannotRescuePaymentToken");
     });
 
     it("Should not allow non-owner to rescue tokens", async function () {
@@ -885,15 +1252,31 @@ describe("Waterfall ERC20 Support", function () {
         )
       ).to.be.revertedWithCustomError(usdcWaterfall, "OwnableUnauthorizedAccount");
     });
+
+    it("Should allow rescuing ETH from ERC20 waterfall", async function () {
+      // rescueETH should work on ERC20-denominated waterfalls
+      // (ETH could arrive via selfdestruct)
+      await expect(usdcWaterfall.rescueETH(owner.address)).to.not.be.reverted;
+    });
+
+    it("Should not allow rescuing ETH from ETH waterfall", async function () {
+      const WaterfallContract = await ethers.getContractFactory("Waterfall");
+      const ethWaterfall = await WaterfallContract.deploy(
+        "ETH Project", ethers.ZeroAddress, ethers.ZeroAddress, 0
+      );
+      await ethWaterfall.waitForDeployment();
+
+      await expect(
+        ethWaterfall.rescueETH(owner.address)
+      ).to.be.revertedWithCustomError(ethWaterfall, "NotERC20Waterfall");
+    });
   });
 
   describe("ETH waterfall rejects amount parameter", function () {
     it("Should reject depositRevenue(amount) on ETH waterfall", async function () {
       const WaterfallContract = await ethers.getContractFactory("Waterfall");
       const ethWaterfall = await WaterfallContract.deploy(
-        "ETH Project", "https://test.com/",
-        ethers.ZeroAddress,
-        ethers.ZeroAddress, 0
+        "ETH Project", ethers.ZeroAddress, ethers.ZeroAddress, 0
       );
       await ethWaterfall.waitForDeployment();
 
@@ -903,7 +1286,7 @@ describe("Waterfall ERC20 Support", function () {
 
       await expect(
         ethWaterfall["depositRevenue(uint256)"](1000, { value: ethers.parseEther("1") })
-      ).to.be.revertedWith("Do not pass amount for ETH deposits");
+      ).to.be.revertedWithCustomError(ethWaterfall, "AmountNotAllowedForETH");
     });
   });
 });

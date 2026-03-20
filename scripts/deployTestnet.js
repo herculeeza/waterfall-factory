@@ -54,7 +54,6 @@ async function main() {
 
   let tx = await factory.createProject(
     "Midnight Dreams",
-    "https://api.waterfall.film/metadata/midnight-dreams/",
     ethers.ZeroAddress
   );
   await tx.wait();
@@ -135,7 +134,6 @@ async function main() {
 
   tx = await factory.createProject(
     "Urban Echoes",
-    "https://api.waterfall.film/metadata/urban-echoes/",
     ethers.ZeroAddress
   );
   await tx.wait();
@@ -227,8 +225,8 @@ async function main() {
 
     const contracts = [
       { name: "Factory", addr: factoryAddr, args: [D, 500] },
-      { name: "Midnight Dreams", addr: mdAddr, args: ["Midnight Dreams", "https://api.waterfall.film/metadata/midnight-dreams/", ethers.ZeroAddress, D, 500] },
-      { name: "Urban Echoes", addr: ueAddr, args: ["Urban Echoes", "https://api.waterfall.film/metadata/urban-echoes/", ethers.ZeroAddress, D, 500] },
+      { name: "Midnight Dreams", addr: mdAddr, args: ["Midnight Dreams", ethers.ZeroAddress, D, 500] },
+      { name: "Urban Echoes", addr: ueAddr, args: ["Urban Echoes", ethers.ZeroAddress, D, 500] },
     ];
 
     for (const c of contracts) {

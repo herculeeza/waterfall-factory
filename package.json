@@ -1,5 +1,5 @@
 {
-  "name": "waterfall-contracts",
+  "name": "waterfall-factory",
   "version": "1.0.0",
   "description": "Smart contracts for Waterfall film revenue distribution",
   "scripts": {
